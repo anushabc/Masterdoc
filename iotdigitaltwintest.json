@@ -1,0 +1,738 @@
+
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "DeploymentID": {
+        "type": "String"
+      }
+     
+    },
+    "variables": {
+      "Functionname": "[concat('DTFunctions',parameters('DeploymentID'))]",
+      "Azure Digital Twins Data Owner": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'bcd981a7-7f74-457b-83e1-cceb9e632ffe')]",
+      
+      "iotHub": {
+        "name": "[concat('iothub',parameters('DeploymentID'))]",
+        "id": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Devices/IotHubs/', parameters('DeploymentID'), 'iothub')]"
+      },
+      "eventHub": {
+        "name": "[concat('eventhub',parameters('DeploymentID'))]",
+        "namespaces": "[concat('eventhubnamespaces',parameters('DeploymentID'))]",
+        "namespacesExternalId": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.EventHub/namespaces/', parameters('DeploymentID'), 'eventhubnamespaces')]"
+      },
+      "digitaltwins": {
+        "name": "[concat('digtwins',parameters('DeploymentID'))]"
+      },
+      "storage": {
+        "name": "[concat('storage',parameters('DeploymentID'))]"
+      },
+      "tsi": {
+        "name": "[concat('tsi',parameters('DeploymentID'))]",
+        "sourceName": "[concat('tsies',parameters('DeploymentID'))]"
+      },
+      "eventGrid": {
+        "name": "[concat('EventGrid',parameters('DeploymentID'))]"
+      },
+      "serverfarm": {
+        "name": "[concat('sf',parameters('DeploymentID'))]"
+      },
+      "logicapp": {
+        "name": "[concat('ShipmentArrivalTimeUpdateApp',parameters('DeploymentID'))]"
+      },
+      "functionapp": {
+        "name": "[concat('DTFunctions',parameters('DeploymentID'))]",
+        "zipurl": "https://github.com/microsoft/MCW-Leveraging-Azure-Digital-Twins-in-a-supply-chain/raw/main/Hands-on%20lab/Resources/deployment/ARM/digital-twins-functions.zip"
+      },
+      "signalr": {
+        "name": "[concat('SignalR', parameters('DeploymentID'))]"
+      }
+    },
+    "resources": [
+      {
+        "type": "Microsoft.Web/serverfarms",
+        "apiVersion": "2018-02-01",
+        "name": "[variables('serverfarm').name]",
+        "location": "[resourceGroup().location]",
+       
+        "dependsOn": [],
+        "sku": {
+          "name": "B1",
+          "tier": "Basic",
+          "size": "B1",
+          "family": "B",
+          "capacity": 1
+        },
+        "kind": "app",
+        "properties": {
+          "perSiteScaling": false,
+          "maximumElasticWorkerCount": 1,
+          "isSpot": false,
+          "reserved": false,
+          "isXenon": false,
+          "hyperV": false,
+          "targetWorkerCount": 0,
+          "targetWorkerSizeId": 0
+        }
+      },
+      {
+        "type": "Microsoft.Storage/storageAccounts",
+        "apiVersion": "2018-02-01",
+        "name": "[variables('storage').name]",
+        "location": "[resourceGroup().location]",
+        "sku": {
+          "name": "Standard_LRS"
+        },
+        "kind": "StorageV2",
+        "properties": {
+          "isHnsEnabled": false
+        }
+      },
+      {
+        "type": "Microsoft.Devices/IotHubs",
+        "apiVersion": "2019-11-04",
+        "name": "[variables('iotHub').name]",
+        "location": "[resourceGroup().location]",
+        "sku": {
+          "name": "S1",
+          "tier": "Standard",
+          "capacity": 1
+        },
+        "properties": {
+          "ipFilterRules": [],
+          "eventHubEndpoints": {
+            "events": {
+              "retentionTimeInDays": 1,
+              "partitionCount": 4
+            }
+          },
+          "routing": {
+            "endpoints": {
+              "serviceBusQueues": [],
+              "serviceBusTopics": [],
+              "eventHubs": [],
+              "storageContainers": []
+            },
+            "routes": [],
+            "fallbackRoute": {
+              "name": "$fallback",
+              "source": "DeviceMessages",
+              "condition": "true",
+              "endpointNames": [
+                "events"
+              ],
+              "isEnabled": true
+            }
+          },
+          "storageEndpoints": {},
+          "messagingEndpoints": {
+            "fileNotifications": {
+              "lockDurationAsIso8601": "PT1M",
+              "ttlAsIso8601": "PT1H",
+              "maxDeliveryCount": 10
+            }
+          },
+          "enableFileUploadNotifications": false,
+          "cloudToDevice": {
+            "maxDeliveryCount": 10,
+            "defaultTtlAsIso8601": "PT1H",
+            "feedback": {
+              "lockDurationAsIso8601": "PT1M",
+              "ttlAsIso8601": "PT1H",
+              "maxDeliveryCount": 10
+            }
+          },
+          "features": "None"
+        }
+      },
+      {
+        "type": "Microsoft.Web/sites",
+        "apiVersion": "2018-11-01",
+        "name": "[variables('functionapp').name]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[concat('Microsoft.Web/serverfarms/', variables('serverfarm').name)]",
+          "[concat('Microsoft.Storage/storageAccounts/', variables('storage').name)]",
+          "[concat('Microsoft.SignalRService/SignalR/', variables('signalr').name)]",
+          "[resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'tsieventhub', 'TsiAuthRule')]",
+          "[resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'twinseventhub', 'TwinsAuthRule')]"
+        ],
+        "tags": {},
+        "kind": "functionapp",
+        "identity": {
+          "type": "SystemAssigned"
+        },
+        "properties": {
+          "name": "[variables('functionapp').name]",
+          "siteConfig": {
+            "appSettings": [
+              {
+                "name": "FUNCTIONS_EXTENSION_VERSION",
+                "value": "~3"
+              },
+              {
+                "name": "FUNCTIONS_WORKER_RUNTIME",
+                "value": "dotnet"
+              },
+              {
+                "name": "AzureWebJobsStorage",
+                "value": "[concat('DefaultEndpointsProtocol=https;AccountName=',variables('storage').name,';AccountKey=',listKeys(resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.Storage/storageAccounts', variables('storage').name), '2019-06-01').keys[0].value,';EndpointSuffix=','core.windows.net')]"
+              },
+              {
+                "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING",
+                "value": "[concat('DefaultEndpointsProtocol=https;AccountName=',variables('storage').name,';AccountKey=',listKeys(resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.Storage/storageAccounts', variables('storage').name), '2019-06-01').keys[0].value,';EndpointSuffix=','core.windows.net')]"
+              },
+              {
+                "name": "WEBSITE_CONTENTSHARE",
+                "value": "[concat(toLower(variables('functionapp').name), 'a202')]"
+              },
+              {
+                "name": "ADT_SERVICE_URL",
+                "value": "[concat('https://', reference(resourceId('Microsoft.DigitalTwins/digitalTwinsInstances', variables('digitaltwins').name)).hostName)]"
+              },
+              {
+                "name": "AzureSignalRConnectionString",
+                "value": "[concat('Endpoint=https://', variables('signalr').name, '.service.signalr.net;AccessKey=', listKeys(resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.SignalRService/SignalR', variables('signalr').name), '2020-07-01-preview').primaryKey, ';Version=1.0;')]"
+              },
+              {
+                "name": "EventHubAppSetting-TSI",
+                "value": "[concat('Endpoint=sb://', variables('eventHub').namespaces, '.servicebus.windows.net/;SharedAccessKeyName=TsiAuthRule;SharedAccessKey=', listKeys(resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'tsieventhub', 'TsiAuthRule'), '2017-04-01').primaryKey, ';EntityPath=TsiEventHub')]"
+              },
+              {
+                "name": "EventHubAppSetting-Twins",
+                "value": "[concat('Endpoint=sb://', variables('eventHub').namespaces, '.servicebus.windows.net/;SharedAccessKeyName=TwinsAuthRule;SharedAccessKey=', listKeys(resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'twinseventhub', 'TwinsAuthRule'), '2017-04-01').primaryKey, ';EntityPath=TwinsEventHub')]"
+              }
+            ],
+            "use32BitWorkerProcess": true
+          },
+          "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('serverfarm').name)]",
+          "clientAffinityEnabled": true
+        },
+        "resources": [
+          {
+            "type": "extensions",
+            "apiVersion": "2015-08-01",
+            "name": "MSDeploy",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[concat('Microsoft.Web/sites/', variables('functionapp').name)]"
+            ],
+            "tags": {
+              "displayName": "webDeploy"
+            },
+            "properties": {
+              "packageUri": "[variables('functionapp').zipurl]",
+              "dbType": "None",
+              "connectionString": ""
+            }
+          }
+        ]
+      },
+      {
+        "type": "Microsoft.Web/sites/config",
+        "apiVersion": "2018-11-01",
+        "name": "[concat(variables('functionapp').name, '/web')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[resourceId('Microsoft.Web/sites', variables('functionapp').name)]",
+          "[resourceId('Microsoft.Web/sites/extensions', variables('functionapp').name,'MSDeploy')]"
+        ],
+        "properties": {
+          "numberOfWorkers": 1,
+          "defaultDocuments": [
+            "Default.htm",
+            "Default.html",
+            "Default.asp",
+            "index.htm",
+            "index.html",
+            "iisstart.htm",
+            "default.aspx",
+            "index.php"
+          ],
+          "netFrameworkVersion": "v4.0",
+          "phpVersion": "5.6",
+          "requestTracingEnabled": false,
+          "remoteDebuggingEnabled": false,
+          "remoteDebuggingVersion": "VS2019",
+          "httpLoggingEnabled": false,
+          "logsDirectorySizeLimit": 35,
+          "detailedErrorLoggingEnabled": false,
+          "publishingUsername": "[concat('$', variables('functionapp').name)]",
+          "azureStorageAccounts": {},
+          "scmType": "None",
+          "use32BitWorkerProcess": true,
+          "webSocketsEnabled": false,
+          "alwaysOn": false,
+          "managedPipelineMode": "Integrated",
+          "virtualApplications": [
+            {
+              "virtualPath": "/",
+              "physicalPath": "site\\wwwroot",
+              "preloadEnabled": false
+            }
+          ],
+          "loadBalancing": "LeastRequests",
+          "experiments": {
+            "rampUpRules": []
+          },
+          "autoHealEnabled": false,
+          "cors": {
+            "allowedOrigins": [
+              "https://functions.azure.com",
+              "https://functions-staging.azure.com",
+              "https://functions-next.azure.com",
+              "http://localhost:3000",
+              "https://localhost:44396",
+              "https://localhost:5001"
+            ],
+            "supportCredentials": true
+          },
+          "localMySqlEnabled": false,
+          "managedServiceIdentityId": 5506,
+          "ipSecurityRestrictions": [
+            {
+              "ipAddress": "Any",
+              "action": "Allow",
+              "priority": 1,
+              "name": "Allow all",
+              "description": "Allow all access"
+            }
+          ],
+          "scmIpSecurityRestrictions": [
+            {
+              "ipAddress": "Any",
+              "action": "Allow",
+              "priority": 1,
+              "name": "Allow all",
+              "description": "Allow all access"
+            }
+          ],
+          "scmIpSecurityRestrictionsUseMain": false,
+          "http20Enabled": false,
+          "minTlsVersion": "1.2",
+          "ftpsState": "AllAllowed",
+          "reservedInstanceCount": 0
+        }
+      },
+      {
+        "type": "Microsoft.DigitalTwins/digitalTwinsInstances",
+        "apiVersion": "2020-03-01-preview",
+        "name": "[variables('digitaltwins').name]",
+        "location": "[resourceGroup().location]",
+        "tags": {},
+        "sku": {
+          "name": "S1"
+        },
+        "properties": {}
+      },
+      {
+        "type": "Microsoft.DigitalTwins/digitalTwinsInstances/endpoints",
+        "apiVersion": "2020-10-31",
+        "name": "[concat(variables('digitaltwins').name, '/DTEndpoint')]",
+        "dependsOn": [
+          "[resourceId('Microsoft.DigitalTwins/digitalTwinsInstances', variables('digitaltwins').name)]",
+          "[resourceId('Microsoft.EventGrid/topics', variables('eventGrid').name)]"
+        ],
+        "properties": {
+          "endpointType": "EventGrid",
+          "TopicEndpoint": "[reference(variables('eventGrid').name).endpoint]",
+          "accessKey1": "[listKeys(resourceId('Microsoft.EventGrid/topics', variables('eventGrid').name), '2020-06-01').key1]"
+        }
+      },
+      {
+        "type": "Microsoft.DigitalTwins/digitalTwinsInstances/endpoints",
+        "apiVersion": "2020-10-31",
+        "name": "[concat(variables('digitaltwins').name, '/EventHubEndpoint')]",
+        "dependsOn": [
+          "[resourceId('Microsoft.DigitalTwins/digitalTwinsInstances', variables('digitaltwins').name)]",
+          "[resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'twinseventhub', 'TwinsAuthRule')]"
+        ],
+        "properties": {
+          "endpointType": "EventHub",
+          "connectionStringPrimaryKey": "[concat('Endpoint=sb://', variables('eventHub').namespaces, '.servicebus.windows.net/;SharedAccessKeyName=TwinsAuthRule;SharedAccessKey=', listKeys(resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'twinseventhub', 'TwinsAuthRule'), '2017-04-01').primaryKey, ';EntityPath=twinseventhub')]",
+          "connectionStringSecondaryKey": "[concat('Endpoint=sb://', variables('eventHub').namespaces, '.servicebus.windows.net/;SharedAccessKeyName=TwinsAuthRule;SharedAccessKey=', listKeys(resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'twinseventhub', 'TwinsAuthRule'), '2017-04-01').secondaryKey, ';EntityPath=twinseventhub')]"
+        }
+      },
+     {
+        "type": "Microsoft.EventHub/namespaces",
+        "apiVersion": "2018-01-01-preview",
+        "name": "[variables('eventHub').namespaces]",
+        "location": "[resourceGroup().location]",
+        "sku": {
+          "name": "Standard",
+          "tier": "Standard",
+          "capacity": 1
+        },
+        "properties": {
+          "zoneRedundant": false,
+          "isAutoInflateEnabled": false,
+          "maximumThroughputUnits": 0,
+          "kafkaEnabled": true
+        }
+      },
+      {
+        "type": "Microsoft.EventHub/namespaces/AuthorizationRules",
+        "apiVersion": "2017-04-01",
+        "name": "[concat(variables('eventHub').namespaces, '/RootManageSharedAccessKey')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[resourceId('Microsoft.EventHub/namespaces', variables('eventHub').namespaces)]"
+        ],
+        "properties": {
+          "rights": [
+            "Listen",
+            "Manage",
+            "Send"
+          ]
+        }
+      },
+      {
+        "type": "Microsoft.EventHub/namespaces/eventhubs",
+        "apiVersion": "2017-04-01",
+        "name": "[concat(variables('eventHub').namespaces, '/tsieventhub')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[resourceId('Microsoft.EventHub/namespaces', variables('eventHub').namespaces)]"
+        ],
+        "properties": {
+          "messageRetentionInDays": 7,
+          "partitionCount": 4,
+          "status": "Active"
+        }
+      },
+      {
+        "type": "Microsoft.EventHub/namespaces/eventhubs",
+        "apiVersion": "2017-04-01",
+        "name": "[concat(variables('eventHub').namespaces, '/twinseventhub')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[resourceId('Microsoft.EventHub/namespaces', variables('eventHub').namespaces)]"
+        ],
+        "properties": {
+          "messageRetentionInDays": 7,
+          "partitionCount": 4,
+          "status": "Active"
+        }
+      },
+      {
+        "type": "Microsoft.EventHub/namespaces/eventhubs/authorizationRules",
+        "apiVersion": "2017-04-01",
+        "name": "[concat(variables('eventHub').namespaces, '/tsieventhub/TsiAuthRule')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[resourceId('Microsoft.EventHub/namespaces/eventhubs', variables('eventHub').namespaces, 'tsieventhub')]",
+          "[resourceId('Microsoft.EventHub/namespaces', variables('eventHub').namespaces)]"
+        ],
+        "properties": {
+          "rights": [
+            "Listen",
+            "Send"
+          ]
+        }
+      },
+      {
+        "type": "Microsoft.EventHub/namespaces/eventhubs/authorizationRules",
+        "apiVersion": "2017-04-01",
+        "name": "[concat(variables('eventHub').namespaces, '/twinseventhub/TwinsAuthRule')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[resourceId('Microsoft.EventHub/namespaces/eventhubs', variables('eventHub').namespaces, 'twinseventhub')]",
+          "[resourceId('Microsoft.EventHub/namespaces', variables('eventHub').namespaces)]"
+        ],
+        "properties": {
+          "rights": [
+            "Listen",
+            "Send"
+          ]
+        }
+      },
+      {
+        "type": "Microsoft.EventHub/namespaces/eventhubs/consumergroups",
+        "apiVersion": "2017-04-01",
+        "name": "[concat(variables('eventHub').namespaces, '/tsieventhub/tsi-preview')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[resourceId('Microsoft.EventHub/namespaces/eventhubs', variables('eventHub').namespaces, 'tsieventhub')]",
+          "[resourceId('Microsoft.EventHub/namespaces', variables('eventHub').namespaces)]"
+        ],
+        "properties": {}
+      },
+      {
+        "type": "Microsoft.TimeSeriesInsights/environments",
+        "apiVersion": "2020-05-15",
+        "name": "[variables('tsi').name]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[concat('Microsoft.Storage/storageAccounts/', variables('storage').name)]"
+        ],
+        "tags": {},
+        "sku": {
+          "name": "L1",
+          "capacity": 1
+        },
+        "kind": "longterm",
+        "properties": {
+          "storageConfiguration": {
+            "accountName": "[variables('storage').name]",
+            "managementKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storage').name), '2018-02-01').keys[0].value]"
+          },
+          "timeSeriesIdProperties": [
+            {
+              "name": "$dtId",
+              "type": "string"
+            }
+          ],
+          "warmStoreConfiguration": {
+            "dataRetention": "P7D"
+          }
+        },
+        "resources": [
+          {
+            "type": "Microsoft.TimeSeriesInsights/environments/eventsources",
+            "apiVersion": "2020-05-15",
+            "name": "[concat(variables('tsi').name, '/HubInput')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[concat('Microsoft.TimeSeriesInsights/environments/', variables('tsi').name)]",
+              "[resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'tsieventhub', 'TsiAuthRule')]"
+            ],
+            "kind": "Microsoft.EventHub",
+            "properties": {
+              "serviceBusNamespace": "[variables('eventHub').namespaces]",
+              "eventHubName": "tsieventhub",
+              "keyName": "TsiAuthRule",
+              "consumerGroupName": "tsi-preview",
+              "timestampPropertyName": "timestamp",
+              "eventSourceResourceId": "[resourceId('Microsoft.EventHub/namespaces/eventhubs', variables('eventHub').namespaces, 'tsieventhub')]",
+              "provisioningState": "Succeeded",
+              "sharedAccessKey": "[listKeys(resourceId(subscription().subscriptionId,resourceGroup().name,'Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHub').namespaces, 'tsieventhub', 'TsiAuthRule'), '2017-04-01').primaryKey]"
+            }
+          }
+        ]
+      },
+      {
+        "type": "Microsoft.EventGrid/topics",
+        "apiVersion": "2020-06-01",
+        "name": "[variables('eventGrid').name]",
+        "location": "[resourceGroup().location]",
+        "properties": {
+          "inputSchema": "EventGridSchema",
+          "publicNetworkAccess": "Enabled"
+        }
+      },
+      {
+        "type": "Microsoft.Logic/workflows",
+        "apiVersion": "2016-10-01",
+        "name": "[variables('logicapp').name]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+          "[resourceId('Microsoft.DigitalTwins/digitalTwinsInstances', variables('digitaltwins').name)]"
+        ],
+        "tags": {},
+        "identity": {
+          "type": "SystemAssigned"
+        },
+        "properties": {
+          "state": "Disabled",
+          "definition": {
+            "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+            "contentVersion": "1.0.0.0",
+            "parameters": {
+              "$connections": {
+                "defaultValue": {},
+                "type": "Object"
+              }
+            },
+            "triggers": {
+              "Recurrence": {
+                "recurrence": {
+                  "frequency": "Hour",
+                  "interval": 1
+                },
+                "type": "Recurrence"
+              }
+            },
+            "actions": {
+              "For_each": {
+                "foreach": "@body('Parse_JSON')?['value']",
+                "actions": {
+                  "HTTP_2": {
+                    "runAfter": {},
+                    "type": "Http",
+                    "inputs": {
+                      "authentication": {
+                        "audience": "https://digitaltwins.azure.net",
+                        "type": "ManagedServiceIdentity"
+                      },
+                      "body": [
+                        {
+                          "op": "replace",
+                          "path": "/EstimatedTimeOfArrival",
+                          "value": "@{addMinutes(utcNow(), rand(5760, 6800))}"
+                        }
+                      ],
+                      "method": "PATCH",
+                      "queries": {
+                        "api-version": "2020-10-31"
+                      },
+                      "uri": "[concat('https://', reference(resourceId('Microsoft.DigitalTwins/digitalTwinsInstances', variables('digitaltwins').name)).hostName, '/digitaltwins/@{items(''For_each'')?[''$dtId'']}')]"
+                    }
+                  }
+                },
+                "runAfter": {
+                  "Parse_JSON": [
+                    "Succeeded"
+                  ]
+                },
+                "type": "Foreach"
+              },
+              "HTTP": {
+                "runAfter": {},
+                "type": "Http",
+                "inputs": {
+                  "authentication": {
+                    "audience": "https://digitaltwins.azure.net",
+                    "type": "ManagedServiceIdentity"
+                  },
+                  "body": {
+                    "query": "SELECT * from digitaltwins WHERE IS_OF_MODEL('dtmi:com:contoso:shipment;1')"
+                  },
+                  "method": "POST",
+                  "queries": {
+                    "api-version": "2020-10-31"
+                  },
+                  "uri": "[concat('https://', reference(resourceId('Microsoft.DigitalTwins/digitalTwinsInstances', variables('digitaltwins').name)).hostName,'/query')]"
+                }
+              },
+              "Parse_JSON": {
+                "runAfter": {
+                  "HTTP": [
+                    "Succeeded"
+                  ]
+                },
+                "type": "ParseJson",
+                "inputs": {
+                  "content": "@body('HTTP')",
+                  "schema": {
+                    "properties": {
+                      "continuationToken": {},
+                      "value": {
+                        "items": {
+                          "properties": {
+                            "$dtId": {
+                              "type": "string"
+                            },
+                            "$etag": {
+                              "type": "string"
+                            },
+                            "$metadata": {
+                              "properties": {
+                                "$model": {
+                                  "type": "string"
+                                },
+                                "EstimatedTimeOfArrival": {
+                                  "properties": {
+                                    "lastUpdateTime": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "Location": {
+                                  "properties": {
+                                    "lastUpdateTime": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "EstimatedTimeOfArrival": {
+                              "type": "string"
+                            },
+                            "Location": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "$dtId",
+                            "$etag",
+                            "EstimatedTimeOfArrival",
+                            "Location",
+                            "$metadata"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "outputs": {}
+          },
+          "parameters": {}
+        }
+      },
+      {
+        "type": "Microsoft.SignalRService/SignalR",
+        "apiVersion": "2020-07-01-preview",
+        "name": "[variables('signalr').name]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [],
+        "tags": {},
+        "sku": {
+          "name": "Free_F1",
+          "tier": "Free",
+          "capacity": 1
+        },
+        "kind": "SignalR",
+        "properties": {
+          "features": [
+            {
+              "flag": "ServiceMode",
+              "value": "Serverless"
+            },
+            {
+              "flag": "EnableConnectivityLogs",
+              "value": "true"
+            }
+          ],
+          "cors": {
+            "allowedOrigins": [
+              "*"
+            ]
+          }
+        }
+      },
+      {
+        "type":"Microsoft.Authorization/roleAssignments",
+        "apiVersion":"2018-09-01-preview",
+        "name":"[guid(concat(resourceGroup().id, 'Azure Digital Twins Data Owner'))]",
+        "properties":{
+          "roleDefinitionId":"[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'bcd981a7-7f74-457b-83e1-cceb9e632ffe')]",
+          "principalId":"[reference(resourceId('Microsoft.Web/sites', variables('functionname')), '2016-08-01', 'Full').identity.principalId]"
+            }
+        },
+        {
+          "type": "Microsoft.Authorization/roleAssignments",
+          "apiVersion": "2018-09-01-preview",
+          "name":"[guid(concat(resourceGroup().id, 'Azure Digital Twins Data Owner'))]",
+      
+        "properties": {
+          "roleDefinitionId":"[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'bcd981a7-7f74-457b-83e1-cceb9e632ffe')]",
+          "principalId":"[reference(resourceId('Microsoft.Logic/workflows', variables('logicapp').name), '2016-06-01', 'Full').identity.principalId]"
+  
+
+              
+          }
+       
+      }
+  
+    ]
+  }
+  
